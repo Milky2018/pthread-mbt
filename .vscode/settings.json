@@ -1,0 +1,7 @@
+{
+  "files.associations": {
+    "*.rkt": "racket",
+    "pthread.h": "c",
+    "moonbit.h": "c"
+  }
+}
