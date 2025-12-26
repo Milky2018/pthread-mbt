@@ -2,18 +2,54 @@
 package "username/pthread"
 
 // Values
+pub fn[T] broadcast(Int) -> BroadcastSender[T]
+
+pub fn[T] channel(Int) -> (Sender[T], Receiver[T])
+
+pub fn[T] oneshot() -> (Sender[T], Receiver[T])
+
 pub fn[T] spawn(() -> T) -> Handle[T]
 
 // Errors
 
 // Types and methods
+pub struct BroadcastReceiver[T] {
+  // private fields
+}
+pub fn[T] BroadcastReceiver::destroy(Self[T]) -> Unit
+pub fn[T] BroadcastReceiver::recv(Self[T]) -> T?
+pub fn[T] BroadcastReceiver::try_recv(Self[T]) -> T?
+
+pub struct BroadcastSender[T] {
+  // private fields
+}
+pub fn[T] BroadcastSender::clone(Self[T]) -> Self[T]
+pub fn[T] BroadcastSender::close(Self[T]) -> Unit
+pub fn[T] BroadcastSender::destroy(Self[T]) -> Unit
+pub fn[T] BroadcastSender::send(Self[T], T) -> Int
+pub fn[T] BroadcastSender::subscribe(Self[T]) -> BroadcastReceiver[T]
+
 type Handle[_]
 pub fn[T] Handle::join(Self[T]) -> T
 
-type Mutex[T]
-pub fn[T] Mutex::destroy(Self[T]) -> Unit
-pub fn[T] Mutex::lock(Self[T]) -> (Ref[T], () -> Unit)
-pub fn[T] Mutex::new(T) -> Self[T]
+pub struct Receiver[T] {
+  // private fields
+}
+pub fn[T] Receiver::close(Self[T]) -> Unit
+pub fn[T] Receiver::destroy(Self[T]) -> Unit
+pub fn[T] Receiver::is_closed(Self[T]) -> Bool
+pub fn[T] Receiver::len(Self[T]) -> Int
+pub fn[T] Receiver::recv(Self[T]) -> T?
+pub fn[T] Receiver::try_recv(Self[T]) -> T?
+
+pub struct Sender[T] {
+  // private fields
+}
+pub fn[T] Sender::clone(Self[T]) -> Self[T]
+pub fn[T] Sender::close(Self[T]) -> Unit
+pub fn[T] Sender::destroy(Self[T]) -> Unit
+pub fn[T] Sender::send(Self[T], T) -> Bool
+pub fn[T] Sender::try_send(Self[T], T) -> Bool
 
 // Type aliases
 
