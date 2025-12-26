@@ -1,0 +1,21 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "username/pthread"
+
+// Values
+pub fn[T] spawn(() -> T) -> Handle[T]
+
+// Errors
+
+// Types and methods
+type Handle[_]
+pub fn[T] Handle::join(Self[T]) -> T
+
+type Mutex[T]
+pub fn[T] Mutex::destroy(Self[T]) -> Unit
+pub fn[T] Mutex::lock(Self[T]) -> (Ref[T], () -> Unit)
+pub fn[T] Mutex::new(T) -> Self[T]
+
+// Type aliases
+
+// Traits
+

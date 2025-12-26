@@ -13,10 +13,17 @@ priv type Any
 fn[A, B] cast(a : A) -> B = "%identity"
 
 ///|
-#borrow(call_closure, closure)
+fn run_closure(closure : Any) -> Any {
+  let closure : () -> Any = cast(closure)
+  closure()
+}
+
+///|
+#borrow(callback)
+#owned(data)
 extern "c" fn mthread_spawn(
-  call_closure : FuncRef[(() -> Unit) -> Unit],
-  closure : () -> Unit,
+  callback : FuncRef[(Any) -> Any],
+  data : Any,
 ) -> MThreadRef = "mbt_mthread_spawn"
 
 ///|
@@ -26,16 +33,16 @@ extern "c" fn mthread_join(mid : MThreadRef, res_box : Any) -> Unit = "mbt_mthre
 
 ///|
 pub fn[T] spawn(entry : () -> T) -> Handle[T] {
-  let entry = cast(entry)
-  let mid = mthread_spawn(fn(f) { f() }, entry)
+  let entry : () -> Any = fn() { cast(Ref::new(entry())) }
+  let mid = mthread_spawn(fn(closure) { run_closure(closure) }, cast(entry))
   { mthread_id: mid }
 }
 
 ///|
 pub fn[T] Handle::join(self : Handle[T]) -> T {
-  let res_box = UninitializedArray::make(1)
+  let res_box : UninitializedArray[Ref[T]] = UninitializedArray::make(1)
   mthread_join(self.mthread_id, cast(res_box))
-  res_box[0]
+  res_box[0].val
 }
 
 ///|
@@ -68,13 +75,13 @@ pub fn[T] Mutex::new(value : T) -> Mutex[T] {
 }
 
 ///|
-pub fn[T] Mutex::lock(self : Mutex[T]) -> (T, () -> Unit) {
+pub fn[T] Mutex::lock(self : Mutex[T]) -> (Ref[T], () -> Unit) {
   mutex_lock(self.mutex_ref)
   fn unlock() {
     mutex_unlock(self.mutex_ref)
   }
 
-  (self.value.val, unlock)
+  (self.value, unlock)
 }
 
 ///|
@@ -83,35 +90,31 @@ pub fn[T] Mutex::destroy(self : Mutex[T]) -> Unit {
 }
 
 ///|
-struct Counter {
-  val : Int
+priv struct Counter {
+  mut val : Int
 }
-
-///|
-let mutexes : Map[Int, Mutex[Any]] = Map::new()
 
 ///|
 test {
   let counter : Mutex[Counter] = Mutex::new(Counter::{ val: 0 })
-  let x = 100
   defer counter.destroy()
   let handle1 = spawn(fn() {
-    // for i in 0..<100 {
-    //   let (counter, unlock) = counter.lock()
-    //   counter.val += 1
-    //   unlock()
-    // }
+    for i in 0..<100 {
+      let (counter, unlock) = counter.lock()
+      counter.val.val += 1
+      unlock()
+    }
     "Hi"
   })
   let handle2 = spawn(fn() {
-    // for i in 0..<100 {
-    //   let (counter, unlock) = counter.lock()
-    //   counter.val += 1
-    //   unlock()
-    // }
+    for i in 0..<100 {
+      let (counter, unlock) = counter.lock()
+      counter.val.val += 1
+      unlock()
+    }
     "Hello"
   })
   inspect(handle1.join(), content="Hi")
   inspect(handle2.join(), content="Hello")
-  inspect(counter.value.val.val, content="0")
+  inspect(counter.value.val.val, content="200")
 }
