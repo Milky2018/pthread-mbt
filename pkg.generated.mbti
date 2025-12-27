@@ -51,6 +51,17 @@ pub fn[T] Sender::destroy(Self[T]) -> Unit
 pub fn[T] Sender::send(Self[T], T) -> Bool
 pub fn[T] Sender::try_send(Self[T], T) -> Bool
 
+pub struct ThreadPool {
+  // private fields
+}
+pub fn ThreadPool::close(Self) -> Unit
+pub fn ThreadPool::destroy(Self) -> Unit
+pub fn ThreadPool::join(Self) -> Unit
+pub fn ThreadPool::new(Int, Int) -> Self
+pub fn ThreadPool::shutdown(Self) -> Unit
+pub fn ThreadPool::submit(Self, () -> Unit) -> Bool
+pub fn[T] ThreadPool::submit_with_result(Self, () -> T) -> Receiver[T]
+
 // Type aliases
 
 // Traits

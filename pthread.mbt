@@ -56,11 +56,11 @@ extern "c" fn chan_new(capacity : Int) -> ChanRef = "mbt_chan_new"
 
 ///|
 #borrow(chan)
-extern "c" fn chan_retain(chan : ChanRef) -> ChanRef = "mbt_retain"
+extern "c" fn chan_sender_clone(chan : ChanRef) -> Unit = "mbt_chan_sender_clone"
 
 ///|
 #borrow(chan)
-extern "c" fn chan_sender_clone(chan : ChanRef) -> Unit = "mbt_chan_sender_clone"
+extern "c" fn chan_receiver_clone(chan : ChanRef) -> Unit = "mbt_chan_receiver_clone"
 
 ///|
 #borrow(chan)
@@ -115,12 +115,7 @@ pub struct Receiver[T] {
 ///|
 pub fn[T] channel(capacity : Int) -> (Sender[T], Receiver[T]) {
   let chan_ref = chan_new(capacity)
-  let sender : Sender[T] = { chan_ref, _marker: Phantom::{  } }
-  let receiver : Receiver[T] = {
-    chan_ref: chan_retain(chan_ref),
-    _marker: Phantom::{  },
-  }
-  (sender, receiver)
+  ({ chan_ref, _marker: Phantom::{  } }, { chan_ref, _marker: Phantom::{  } })
 }
 
 ///|
@@ -131,7 +126,7 @@ pub fn[T] oneshot() -> (Sender[T], Receiver[T]) {
 ///|
 pub fn[T] Sender::clone(self : Sender[T]) -> Sender[T] {
   chan_sender_clone(self.chan_ref)
-  { chan_ref: chan_retain(self.chan_ref), _marker: Phantom::{  } }
+  { chan_ref: self.chan_ref, _marker: Phantom::{  } }
 }
 
 ///|
@@ -192,6 +187,87 @@ pub fn[T] Receiver::close(self : Receiver[T]) -> Unit {
 ///|
 pub fn[T] Receiver::destroy(self : Receiver[T]) -> Unit {
   chan_receiver_drop(self.chan_ref)
+}
+
+///|
+fn[T] receiver_clone(rx : Receiver[T]) -> Receiver[T] {
+  chan_receiver_clone(rx.chan_ref)
+  { chan_ref: rx.chan_ref, _marker: Phantom::{  } }
+}
+
+///|
+pub struct ThreadPool {
+  priv job_tx : Sender[() -> Unit]
+  priv handles : Array[Handle[Unit]]
+}
+
+///|
+pub fn ThreadPool::new(worker_n : Int, queue_capacity : Int) -> ThreadPool {
+  let worker_n = if worker_n <= 0 { 1 } else { worker_n }
+  let queue_capacity = if queue_capacity <= 0 { 1 } else { queue_capacity }
+  let (tx, rx) : (Sender[() -> Unit], Receiver[() -> Unit]) = channel(
+    queue_capacity,
+  )
+  let handles : Array[Handle[Unit]] = []
+  for _ in 0..<worker_n {
+    let worker_rx = receiver_clone(rx)
+    let h = spawn(fn() {
+      defer worker_rx.destroy()
+      while true {
+        match worker_rx.recv() {
+          Some(job) => job()
+          None => break
+        }
+      }
+    })
+    handles.push(h)
+  }
+  rx.destroy()
+  { job_tx: tx, handles }
+}
+
+///|
+pub fn ThreadPool::submit(self : ThreadPool, job : () -> Unit) -> Bool {
+  self.job_tx.send(job)
+}
+
+///|
+pub fn[T] ThreadPool::submit_with_result(
+  self : ThreadPool,
+  job : () -> T,
+) -> Receiver[T] {
+  let (tx, rx) : (Sender[T], Receiver[T]) = oneshot()
+  if !self.submit(fn() {
+      defer tx.destroy()
+      tx.send(job()) |> ignore
+    }) {
+    tx.destroy()
+  }
+  rx
+}
+
+///|
+pub fn ThreadPool::close(self : ThreadPool) -> Unit {
+  self.job_tx.close()
+}
+
+///|
+pub fn ThreadPool::destroy(self : ThreadPool) -> Unit {
+  self.job_tx.destroy()
+}
+
+///|
+pub fn ThreadPool::join(self : ThreadPool) -> Unit {
+  for h in self.handles {
+    h.join()
+  }
+}
+
+///|
+pub fn ThreadPool::shutdown(self : ThreadPool) -> Unit {
+  self.close()
+  self.destroy()
+  self.join()
 }
 
 ///|
