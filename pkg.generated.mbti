@@ -10,6 +10,8 @@ pub fn[T] oneshot() -> (Sender[T], Receiver[T])
 
 pub fn[T] par_each(Iterator[T], ThreadPool, ParConfig, (T) -> Unit) -> Bool
 
+pub fn[T] par_filter_collect_unordered(Iterator[T], ThreadPool, ParConfig, (T) -> Bool) -> Array[T]?
+
 pub fn[T, U] par_map_collect_unordered(Iterator[T], ThreadPool, ParConfig, (T) -> U) -> Array[U]?
 
 pub fn[T] spawn(() -> T) -> Handle[T]
