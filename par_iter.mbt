@@ -413,7 +413,7 @@ pub fn[T, U] par_array_map_reduce(
     return Some(init())
   }
 
-  let desired_tasks = if worker_n <= 0 { 1 } else { worker_n * 4 }
+  let desired_tasks = if worker_n <= 0 { 1 } else { worker_n }
   let min_chunk_size = (n + desired_tasks - 1) / desired_tasks
   let chunk_size = if cfg.chunk_size < min_chunk_size {
     min_chunk_size
