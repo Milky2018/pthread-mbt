@@ -8,6 +8,10 @@ pub fn[T] channel(Int) -> (Sender[T], Receiver[T])
 
 pub fn[T] oneshot() -> (Sender[T], Receiver[T])
 
+pub fn[T] par_each(Iterator[T], ThreadPool, ParConfig, (T) -> Unit) -> Bool
+
+pub fn[T, U] par_map_collect_unordered(Iterator[T], ThreadPool, ParConfig, (T) -> U) -> Array[U]?
+
 pub fn[T] spawn(() -> T) -> Handle[T]
 
 // Errors
@@ -31,6 +35,13 @@ pub fn[T] BroadcastSender::subscribe(Self[T]) -> BroadcastReceiver[T]
 
 type Handle[_]
 pub fn[T] Handle::join(Self[T]) -> T
+
+pub struct ParConfig {
+  chunk_size : Int
+  max_in_flight : Int
+}
+pub fn ParConfig::default(ThreadPool) -> Self
+pub fn ParConfig::new(Int, Int) -> Self
 
 pub struct Receiver[T] {
   // private fields
@@ -59,6 +70,7 @@ pub fn ThreadPool::destroy(Self) -> Unit
 pub fn ThreadPool::join(Self) -> Unit
 pub fn ThreadPool::new(Int, Int) -> Self
 pub fn ThreadPool::shutdown(Self) -> Unit
+pub fn ThreadPool::size(Self) -> Int
 pub fn ThreadPool::submit(Self, () -> Unit) -> Bool
 pub fn[T] ThreadPool::submit_with_result(Self, () -> T) -> Receiver[T]
 

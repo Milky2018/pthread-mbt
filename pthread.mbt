@@ -199,6 +199,7 @@ fn[T] receiver_clone(rx : Receiver[T]) -> Receiver[T] {
 pub struct ThreadPool {
   priv job_tx : Sender[() -> Unit]
   priv handles : Array[Handle[Unit]]
+  priv worker_n : Int
 }
 
 ///|
@@ -223,12 +224,17 @@ pub fn ThreadPool::new(worker_n : Int, queue_capacity : Int) -> ThreadPool {
     handles.push(h)
   }
   rx.destroy()
-  { job_tx: tx, handles }
+  { job_tx: tx, handles, worker_n }
 }
 
 ///|
 pub fn ThreadPool::submit(self : ThreadPool, job : () -> Unit) -> Bool {
   self.job_tx.send(job)
+}
+
+///|
+pub fn ThreadPool::size(self : ThreadPool) -> Int {
+  self.worker_n
 }
 
 ///|
