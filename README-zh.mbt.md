@@ -1,29 +1,25 @@
 # username/pthread
 
-# username/pthread
+一个面向 MoonBit `native` 后端的多线程并发库，主打 **share-nothing + message passing**：
+尽量避免跨线程共享可变内存，通过类型安全的通道传递消息来协调工作。
 
-A MoonBit `native` multithreading library built around **share-nothing + message passing**.
-Instead of sharing mutable memory across threads, you coordinate work via typed channels.
+提供的能力：
 
-Chinese version: `README-zh.mbt.md`
+- 线程：`spawn(() -> T) -> Handle[T]` / `Handle[T]::join() -> T`
+- MPSC：`channel[T](capacity) -> (Sender[T], Receiver[T])`
+- Broadcast：`broadcast[T](capacity) -> BroadcastSender[T]`
+- 线程池：`ThreadPool`
+- 并行 Iterator（Rayon `par_bridge` 风格起步版）：`par_each` / `par_map_collect_unordered` / `par_filter_collect_unordered`
 
-## Features
+## 运行示例
 
-- Threads: `spawn(() -> T) -> Handle[T]` / `Handle[T]::join() -> T`
-- MPSC channels: `channel[T](capacity) -> (Sender[T], Receiver[T])`
-- Broadcast: `broadcast[T](capacity) -> BroadcastSender[T]`
-- Thread pool: `ThreadPool`
-- Parallel Iterator bridge (Rayon-style `par_bridge`, initial): `par_each`, `par_map_collect_unordered`, `par_filter_collect_unordered`
-
-## Runnable examples
-
-All code blocks start with <code>```moonbit check</code> and can be verified with:
+本文档代码块用 <code>```moonbit check</code> 标注，可直接运行：
 
 - `moon test README.mbt.md`
 
-Each example includes the required `destroy()` / `shutdown()` calls to avoid leaking resources.
+下面例子都包含必要的 `destroy()`/`shutdown()`，避免资源泄露。
 
-## Threads: spawn/join
+## 线程：spawn/join
 
 ```moonbit check
 ///|
@@ -33,12 +29,12 @@ test {
 }
 ```
 
-## MPSC channel: multiple senders, single receiver
+## MPSC Channel：多发送者/单接收者
 
-Key semantics:
+语义要点：
 
-- `Sender::clone()` increments the sender count; once all senders are `destroy()`-ed the channel closes
-- `Receiver::recv()` returns `None` only after the queue is drained and the channel is closed
+- `Sender::clone()` 增加发送者引用；当所有 sender 都 `destroy()` 后 channel 自动关闭
+- `Receiver::recv()` 在“队列为空且已关闭”时返回 `None`
 
 ```moonbit check
 ///|
@@ -70,12 +66,12 @@ test {
 }
 ```
 
-## Broadcast: one-to-many, best-effort
+## Broadcast：一对多、尽力投递
 
-Key semantics:
+语义要点：
 
-- `BroadcastSender::send` returns how many subscribers accepted the message (full subscribers drop it)
-- After `close/destroy`, subscribers return `None` once their local buffers are drained
+- `BroadcastSender::send` 返回“成功写入订阅者队列”的数量（满了会丢）
+- `BroadcastSender::close/destroy` 后，订阅者在 drain 完队列后 `recv()` 返回 `None`
 
 ```moonbit check
 ///|
@@ -97,9 +93,9 @@ test {
 }
 ```
 
-## Thread pool: ThreadPool
+## 线程池：ThreadPool
 
-`ThreadPool::submit_with_result` creates a oneshot `Receiver[T]` for each task to retrieve its result.
+`ThreadPool::submit_with_result` 会为每个任务创建一个 oneshot `Receiver[T]` 取回结果。
 
 ```moonbit check
 ///|
@@ -112,16 +108,15 @@ test {
 }
 ```
 
-## Parallel Iterator bridge (initial `par_bridge`)
+## 并行 Iterator（par_bridge 起步版）
 
-The `par_*` helpers take MoonBit's builtin `Iterator[T]` (the one used by `for x in ...`).
-This implementation is equivalent to Rayon’s `par_bridge`:
+`par_*` 系列直接接收 MoonBit 内置 `Iterator[T]`。实现方式类似 Rayon 的 `par_bridge`：
 
-- A **single thread** pulls items by calling `Iterator::next()`
-- Items are batched into chunks of size `ParConfig.chunk_size` and submitted to the `ThreadPool`
-- `ParConfig.max_in_flight` limits how many chunk-tasks can run concurrently (backpressure)
+- **单线程**顺序调用 `Iterator::next()` 拉取元素
+- 按 `ParConfig.chunk_size` 打包成任务，提交到 `ThreadPool`
+- `ParConfig.max_in_flight` 控制最多同时在跑的任务数（背压）
 
-All `*_unordered` helpers **do not preserve order**, so examples check deterministic invariants (length + sum).
+所有 `*_unordered` 都 **不保证输出顺序**（按任务完成顺序汇总），因此示例用“长度 + 和”来做确定性校验。
 
 ### par_map_collect_unordered
 
@@ -178,8 +173,7 @@ test {
 
 ### par_each
 
-`par_each` is for side-effectful work (e.g. sending into another channel).
-It returns `Bool` to indicate whether all chunks were successfully submitted.
+`par_each` 适合并行执行副作用（例如写入另一个 channel）。返回 `Bool` 表示是否全部成功提交（线程池已关闭时会失败）。
 
 ```moonbit check
 ///|
@@ -211,7 +205,7 @@ test {
 }
 ```
 
-## API overview
+## API 概览
 
 - `channel[T](capacity) -> (Sender[T], Receiver[T])`
   - `Sender::{clone, send, try_send, close, destroy}`
@@ -223,9 +217,9 @@ test {
 - `ParConfig::{new, default}`
 - `par_each / par_map_collect_unordered / par_filter_collect_unordered`
 
-## Thread-safety & FFI lifetimes (important)
+## 线程安全与 FFI 生命周期（必读）
 
-On the native/C backend, reference counting is not guaranteed to be atomic/thread-safe.
-Sharing RC-managed MoonBit objects across threads can lead to flaky bugs.
+native/C 后端的引用计数并非线程安全原子操作；跨线程共享“会被 MoonBit RC 管理的对象”可能导致偶现错误。
 
-- Details: `docs/moonbit-refcount.md` (English) / `docs/moonbit-refcount-zh.md` (Chinese)
+- 详细说明见：`docs/moonbit-refcount.md`
+  - 中文版：`docs/moonbit-refcount-zh.md`
