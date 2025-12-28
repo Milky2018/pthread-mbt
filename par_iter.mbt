@@ -11,7 +11,7 @@ pub fn ParConfig::new(chunk_size : Int, max_in_flight : Int) -> ParConfig {
 
 ///|
 pub fn ParConfig::default(pool : ThreadPool) -> ParConfig {
-  { chunk_size: 64, max_in_flight: pool.size() * 2 }
+  { chunk_size: 1024, max_in_flight: pool.size() * 2 }
 }
 
 ///|
@@ -34,35 +34,55 @@ pub fn[T] par_each(
   f : (T) -> Unit,
 ) -> Bool {
   let cfg = normalize_config(pool, cfg)
-  let (done_tx, done_rx) : (Sender[Int], Receiver[Int]) = channel(
+  let worker_n = pool.size()
+  let (work_tx, work_rx) : (Sender[Array[T]], Receiver[Array[T]]) = channel(
     cfg.max_in_flight,
   )
+  let (done_tx, done_rx) : (Sender[Int], Receiver[Int]) = channel(cfg.max_in_flight)
   defer done_rx.destroy()
-  let mut inflight = 0
+
   let mut ok = true
-  let mut chunk : Array[T] = []
-  fn schedule_chunk(chunk : Array[T]) {
-    let dtx = done_tx.clone()
-    let submitted = pool.submit(fn() {
-      defer dtx.destroy()
-      for x in chunk {
-        f(x)
-      }
-      dtx.send(1) |> ignore
-    })
-    if submitted {
-      inflight += 1
-    } else {
+  for _ in 0..<worker_n {
+    let rx = receiver_clone(work_rx)
+    let tx = done_tx.clone()
+    if !pool.submit(fn() {
+        defer rx.destroy()
+        defer tx.destroy()
+        while true {
+          match rx.recv() {
+            Some(chunk) => {
+              for x in chunk {
+                f(x)
+              }
+              tx.send(1) |> ignore
+            }
+            None => break
+          }
+        }
+      }) {
       ok = false
-      dtx.destroy()
+      rx.destroy()
+      tx.destroy()
     }
   }
+  work_rx.destroy()
+  done_tx.destroy()
+
+  let mut inflight = 0
+  let mut chunk : Array[T] = []
+  chunk.reserve_capacity(cfg.chunk_size)
 
   while iter.next() is Some(x) {
     chunk.push(x)
     if chunk.length() >= cfg.chunk_size {
-      schedule_chunk(chunk)
+      if work_tx.send(chunk) {
+        inflight += 1
+      } else {
+        ok = false
+        break
+      }
       chunk = []
+      chunk.reserve_capacity(cfg.chunk_size)
       if inflight >= cfg.max_in_flight {
         match done_rx.recv() {
           Some(_) => inflight -= 1
@@ -74,11 +94,16 @@ pub fn[T] par_each(
       }
     }
   }
-  if chunk.length() > 0 {
-    schedule_chunk(chunk)
-    chunk = []
+
+  if ok && chunk.length() > 0 {
+    if work_tx.send(chunk) {
+      inflight += 1
+    } else {
+      ok = false
+    }
   }
-  done_tx.destroy()
+  work_tx.destroy()
+
   while inflight > 0 {
     match done_rx.recv() {
       Some(_) => inflight -= 1
@@ -96,37 +121,60 @@ pub fn[T, U] par_map_collect_unordered(
   f : (T) -> U,
 ) -> Array[U]? {
   let cfg = normalize_config(pool, cfg)
+  let worker_n = pool.size()
+  let (work_tx, work_rx) : (Sender[Array[T]], Receiver[Array[T]]) = channel(
+    cfg.max_in_flight,
+  )
   let (out_tx, out_rx) : (Sender[Array[U]], Receiver[Array[U]]) = channel(
     cfg.max_in_flight,
   )
   defer out_rx.destroy()
-  let mut inflight = 0
+
   let mut ok = true
-  let mut chunk : Array[T] = []
-  let out : Array[U] = []
-  fn schedule_chunk(chunk : Array[T]) {
+  for _ in 0..<worker_n {
+    let rx = receiver_clone(work_rx)
     let tx = out_tx.clone()
-    let submitted = pool.submit(fn() {
-      defer tx.destroy()
-      let mapped : Array[U] = []
-      for x in chunk {
-        mapped.push(f(x))
-      }
-      tx.send(mapped) |> ignore
-    })
-    if submitted {
-      inflight += 1
-    } else {
+    if !pool.submit(fn() {
+        defer rx.destroy()
+        defer tx.destroy()
+        while true {
+          match rx.recv() {
+            Some(chunk) => {
+              let mapped : Array[U] = []
+              mapped.reserve_capacity(chunk.length())
+              for x in chunk {
+                mapped.push(f(x))
+              }
+              tx.send(mapped) |> ignore
+            }
+            None => break
+          }
+        }
+      }) {
       ok = false
+      rx.destroy()
       tx.destroy()
     }
   }
+  work_rx.destroy()
+  out_tx.destroy()
+
+  let mut inflight = 0
+  let mut chunk : Array[T] = []
+  chunk.reserve_capacity(cfg.chunk_size)
+  let out : Array[U] = []
 
   while iter.next() is Some(x) {
     chunk.push(x)
     if chunk.length() >= cfg.chunk_size {
-      schedule_chunk(chunk)
+      if work_tx.send(chunk) {
+        inflight += 1
+      } else {
+        ok = false
+        break
+      }
       chunk = []
+      chunk.reserve_capacity(cfg.chunk_size)
       if inflight >= cfg.max_in_flight {
         match out_rx.recv() {
           Some(mapped) => {
@@ -141,11 +189,16 @@ pub fn[T, U] par_map_collect_unordered(
       }
     }
   }
-  if chunk.length() > 0 {
-    schedule_chunk(chunk)
-    chunk = []
+
+  if ok && chunk.length() > 0 {
+    if work_tx.send(chunk) {
+      inflight += 1
+    } else {
+      ok = false
+    }
   }
-  out_tx.destroy()
+  work_tx.destroy()
+
   while inflight > 0 {
     match out_rx.recv() {
       Some(mapped) => {
@@ -155,11 +208,8 @@ pub fn[T, U] par_map_collect_unordered(
       None => break
     }
   }
-  if ok {
-    Some(out)
-  } else {
-    None
-  }
+
+  if ok { Some(out) } else { None }
 }
 
 ///|
@@ -170,39 +220,61 @@ pub fn[T] par_filter_collect_unordered(
   pred : (T) -> Bool,
 ) -> Array[T]? {
   let cfg = normalize_config(pool, cfg)
+  let worker_n = pool.size()
+  let (work_tx, work_rx) : (Sender[Array[T]], Receiver[Array[T]]) = channel(
+    cfg.max_in_flight,
+  )
   let (out_tx, out_rx) : (Sender[Array[T]], Receiver[Array[T]]) = channel(
     cfg.max_in_flight,
   )
   defer out_rx.destroy()
-  let mut inflight = 0
+
   let mut ok = true
-  let mut chunk : Array[T] = []
-  let out : Array[T] = []
-  fn schedule_chunk(chunk : Array[T]) {
+  for _ in 0..<worker_n {
+    let rx = receiver_clone(work_rx)
     let tx = out_tx.clone()
-    let submitted = pool.submit(fn() {
-      defer tx.destroy()
-      let kept : Array[T] = []
-      for x in chunk {
-        if pred(x) {
-          kept.push(x)
+    if !pool.submit(fn() {
+        defer rx.destroy()
+        defer tx.destroy()
+        while true {
+          match rx.recv() {
+            Some(chunk) => {
+              let kept : Array[T] = []
+              for x in chunk {
+                if pred(x) {
+                  kept.push(x)
+                }
+              }
+              tx.send(kept) |> ignore
+            }
+            None => break
+          }
         }
-      }
-      tx.send(kept) |> ignore
-    })
-    if submitted {
-      inflight += 1
-    } else {
+      }) {
       ok = false
+      rx.destroy()
       tx.destroy()
     }
   }
+  work_rx.destroy()
+  out_tx.destroy()
+
+  let mut inflight = 0
+  let mut chunk : Array[T] = []
+  chunk.reserve_capacity(cfg.chunk_size)
+  let out : Array[T] = []
 
   while iter.next() is Some(x) {
     chunk.push(x)
     if chunk.length() >= cfg.chunk_size {
-      schedule_chunk(chunk)
+      if work_tx.send(chunk) {
+        inflight += 1
+      } else {
+        ok = false
+        break
+      }
       chunk = []
+      chunk.reserve_capacity(cfg.chunk_size)
       if inflight >= cfg.max_in_flight {
         match out_rx.recv() {
           Some(kept) => {
@@ -217,11 +289,16 @@ pub fn[T] par_filter_collect_unordered(
       }
     }
   }
-  if chunk.length() > 0 {
-    schedule_chunk(chunk)
-    chunk = []
+
+  if ok && chunk.length() > 0 {
+    if work_tx.send(chunk) {
+      inflight += 1
+    } else {
+      ok = false
+    }
   }
-  out_tx.destroy()
+  work_tx.destroy()
+
   while inflight > 0 {
     match out_rx.recv() {
       Some(kept) => {
@@ -231,9 +308,176 @@ pub fn[T] par_filter_collect_unordered(
       None => break
     }
   }
-  if ok {
-    Some(out)
-  } else {
-    None
+
+  if ok { Some(out) } else { None }
+}
+
+///|
+pub fn[T, U] par_map_reduce_unordered(
+  iter : Iterator[T],
+  pool : ThreadPool,
+  cfg : ParConfig,
+  map : (T) -> U,
+  reduce : (U, U) -> U,
+) -> U? {
+  let cfg = normalize_config(pool, cfg)
+  let worker_n = pool.size()
+  let (work_tx, work_rx) : (Sender[Array[T]], Receiver[Array[T]]) = channel(
+    cfg.max_in_flight,
+  )
+  let (res_tx, res_rx) : (Sender[U], Receiver[U]) = channel(worker_n)
+  defer res_rx.destroy()
+
+  let mut ok = true
+  for _ in 0..<worker_n {
+    let rx = receiver_clone(work_rx)
+    let tx = res_tx.clone()
+    if !pool.submit(fn() {
+        defer rx.destroy()
+        defer tx.destroy()
+        let mut acc : U? = None
+        while true {
+          match rx.recv() {
+            Some(chunk) => {
+              for x in chunk {
+                let v = map(x)
+                acc = match acc {
+                  Some(a) => Some(reduce(a, v))
+                  None => Some(v)
+                }
+              }
+            }
+            None => break
+          }
+        }
+        if acc is Some(v) {
+          tx.send(v) |> ignore
+        }
+      }) {
+      ok = false
+      rx.destroy()
+      tx.destroy()
+    }
   }
+  work_rx.destroy()
+  res_tx.destroy()
+
+  let mut chunk : Array[T] = []
+  chunk.reserve_capacity(cfg.chunk_size)
+  while ok && iter.next() is Some(x) {
+    chunk.push(x)
+    if chunk.length() >= cfg.chunk_size {
+      if !work_tx.send(chunk) {
+        ok = false
+        break
+      }
+      chunk = []
+      chunk.reserve_capacity(cfg.chunk_size)
+    }
+  }
+  if ok && chunk.length() > 0 {
+    if !work_tx.send(chunk) {
+      ok = false
+    }
+  }
+  work_tx.destroy()
+
+  let mut acc : U? = None
+  while true {
+    match res_rx.recv() {
+      Some(v) => {
+        acc = match acc {
+          Some(a) => Some(reduce(a, v))
+          None => Some(v)
+        }
+      }
+      None => break
+    }
+  }
+  if ok { acc } else { None }
+}
+
+///|
+pub fn[T, U] par_array_map_reduce(
+  xs : ArrayView[T],
+  pool : ThreadPool,
+  cfg : ParConfig,
+  map : (T) -> U,
+  init : () -> U,
+  reduce : (U, U) -> U,
+) -> U? {
+  let cfg = normalize_config(pool, cfg)
+  let worker_n = pool.size()
+  let n = xs.length()
+  if n <= 0 {
+    return Some(init())
+  }
+
+  let desired_tasks = if worker_n <= 0 { 1 } else { worker_n * 4 }
+  let min_chunk_size = (n + desired_tasks - 1) / desired_tasks
+  let chunk_size = if cfg.chunk_size < min_chunk_size {
+    min_chunk_size
+  } else {
+    cfg.chunk_size
+  }
+
+  let (tx, rx) : (Sender[U], Receiver[U]) = channel(cfg.max_in_flight)
+  defer rx.destroy()
+
+  let mut inflight = 0
+  let mut ok = true
+  let mut acc = init()
+
+  let mut start = 0
+  while start < n {
+    let end = {
+      let end = start + chunk_size
+      if end > n { n } else { end }
+    }
+    let s = start
+    let e = end
+    let rtx = tx.clone()
+    let submitted = pool.submit(fn() {
+      defer rtx.destroy()
+      let mut local = init()
+      for i in s..<e {
+        local = reduce(local, map(xs[i]))
+      }
+      rtx.send(local) |> ignore
+    })
+    if submitted {
+      inflight += 1
+    } else {
+      ok = false
+      rtx.destroy()
+      break
+    }
+
+    if inflight >= cfg.max_in_flight {
+      match rx.recv() {
+        Some(v) => {
+          acc = reduce(acc, v)
+          inflight -= 1
+        }
+        None => {
+          inflight = 0
+          break
+        }
+      }
+    }
+    start = end
+  }
+
+  tx.destroy()
+  while inflight > 0 {
+    match rx.recv() {
+      Some(v) => {
+        acc = reduce(acc, v)
+        inflight -= 1
+      }
+      None => break
+    }
+  }
+
+  if ok { Some(acc) } else { None }
 }

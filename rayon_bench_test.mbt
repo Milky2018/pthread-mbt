@@ -37,7 +37,7 @@ fn seq_filter_collect_sum(xs : Array[Int]) -> Int {
 
 ///|
 test "bench rayon-like: map_collect + sum" (b : @bench.T) {
-  let n = 50_000
+  let n = 1_000_000
   let xs = make_data(n)
   let pool = ThreadPool::new(4, 256)
   defer pool.shutdown()
@@ -55,6 +55,39 @@ test "bench rayon-like: map_collect + sum" (b : @bench.T) {
           }
           b.keep(sum)
         }
+        None => b.keep(0)
+      }
+    },
+    count=1,
+  )
+  b.bench(
+    name="par_map_reduce_unordered",
+    fn() {
+      match par_map_reduce_unordered(
+        xs.iterator(),
+        pool,
+        cfg,
+        fn(x) { x * 2 },
+        fn(a, b) { a + b },
+      ) {
+        Some(sum) => b.keep(sum)
+        None => b.keep(0)
+      }
+    },
+    count=1,
+  )
+  b.bench(
+    name="par_array_map_reduce",
+    fn() {
+      match par_array_map_reduce(
+        xs[:],
+        pool,
+        cfg,
+        fn(x) { x * 2 },
+        fn() { 0 },
+        fn(a, b) { a + b },
+      ) {
+        Some(sum) => b.keep(sum)
         None => b.keep(0)
       }
     },
@@ -84,6 +117,39 @@ test "bench rayon-like: filter_collect + sum" (b : @bench.T) {
           }
           b.keep(sum)
         }
+        None => b.keep(0)
+      }
+    },
+    count=1,
+  )
+  b.bench(
+    name="par_map_reduce_unordered (filter-as-map)",
+    fn() {
+      match par_map_reduce_unordered(
+        xs.iterator(),
+        pool,
+        cfg,
+        fn(x) { if x % 2 == 0 { x } else { 0 } },
+        fn(a, b) { a + b },
+      ) {
+        Some(sum) => b.keep(sum)
+        None => b.keep(0)
+      }
+    },
+    count=1,
+  )
+  b.bench(
+    name="par_array_map_reduce (filter-as-map)",
+    fn() {
+      match par_array_map_reduce(
+        xs[:],
+        pool,
+        cfg,
+        fn(x) { if x % 2 == 0 { x } else { 0 } },
+        fn() { 0 },
+        fn(a, b) { a + b },
+      ) {
+        Some(sum) => b.keep(sum)
         None => b.keep(0)
       }
     },
