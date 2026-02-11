@@ -1,10 +1,10 @@
 {
-  "name": "username/pthread",
+  "name": "Milky2018/pthread",
   "version": "0.1.0",
   "readme": "README.mbt.md",
   "repository": "",
   "license": "Apache-2.0",
-  "keywords": [],
-  "description": "",
+  "keywords": ["multi-threading", "parallel"],
+  "description": "Don't use it in production!",
   "preferred-target": "native"
 }

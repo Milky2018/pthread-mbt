@@ -13,6 +13,7 @@ void *mbt_retain(void *obj) {
 
 typedef struct mbt_thread {
   pthread_t t;
+  int started;
   int joined;
 } mbt_thread;
 
@@ -23,7 +24,7 @@ typedef struct mbt_spawn_args {
 
 static void mbt_thread_finalize(void *self) {
   mbt_thread *th = (mbt_thread *)self;
-  if (!th->joined) {
+  if (th->started && !th->joined) {
     pthread_detach(th->t);
     th->joined = 1;
   }
@@ -45,17 +46,66 @@ void *mbt_mthread_spawn(void *(*callback)(void *), void *data) {
   mbt_thread *th = (mbt_thread *)moonbit_make_external_object(
     mbt_thread_finalize, sizeof(mbt_thread)
   );
+  if (!th) {
+    if (data) {
+      moonbit_decref(data);
+    }
+    return NULL;
+  }
   mbt_spawn_args *a = (mbt_spawn_args *)malloc(sizeof(mbt_spawn_args));
-  th->joined = 0;
+  th->started = 0;
+  th->joined = 1;
+  if (!a) {
+    if (data) {
+      moonbit_decref(data);
+    }
+    return th;
+  }
   a->callback = callback;
   a->data = data;
-  pthread_create(&th->t, NULL, mbt_thread_trampoline, a);
+  int rc = pthread_create(&th->t, NULL, mbt_thread_trampoline, a);
+  if (rc != 0) {
+    free(a);
+    if (data) {
+      moonbit_decref(data);
+    }
+    return th;
+  }
+  th->started = 1;
+  th->joined = 0;
   return th;
+}
+
+int32_t mbt_mthread_spawn2(void *(*callback)(void *), void *data, void **out_box) {
+  if (!out_box) {
+    if (data) {
+      moonbit_decref(data);
+    }
+    return 0;
+  }
+  mbt_thread *th = (mbt_thread *)mbt_mthread_spawn(callback, data);
+  out_box[0] = th;
+  return th && th->started;
 }
 
 int32_t mbt_mthread_join(void *tid_ptr, void **res_box) {
   mbt_thread *th = (mbt_thread *)tid_ptr;
-  pthread_join(th->t, res_box);
+  if (!th || !res_box) {
+    return -1;
+  }
+  if (!th->started) {
+    res_box[0] = NULL;
+    return -2;
+  }
+  if (th->joined) {
+    res_box[0] = NULL;
+    return -3;
+  }
+  int rc = pthread_join(th->t, res_box);
+  if (rc != 0) {
+    res_box[0] = NULL;
+    return (int32_t)rc;
+  }
   th->joined = 1;
   return 0;
 }
@@ -170,6 +220,15 @@ void *mbt_chan_new(int32_t capacity) {
     return NULL;
   }
   return c;
+}
+
+int32_t mbt_chan_new2(int32_t capacity, void **out_box) {
+  if (!out_box) {
+    return 0;
+  }
+  void *c = mbt_chan_new(capacity);
+  out_box[0] = c;
+  return c != NULL;
 }
 
 int32_t mbt_chan_sender_clone(void *chan) {
@@ -433,6 +492,9 @@ void *mbt_bcast_new(int32_t capacity) {
   mbt_bcast *b = (mbt_bcast *)moonbit_make_external_object(
     mbt_bcast_finalize, sizeof(mbt_bcast)
   );
+  if (!b) {
+    return NULL;
+  }
   pthread_mutex_init(&b->mu, NULL);
   b->destroyed = 0;
   b->closed = 0;
@@ -442,6 +504,15 @@ void *mbt_bcast_new(int32_t capacity) {
   b->subs_cap = 0;
   b->subs = NULL;
   return b;
+}
+
+int32_t mbt_bcast_new2(int32_t capacity, void **out_box) {
+  if (!out_box) {
+    return 0;
+  }
+  void *b = mbt_bcast_new(capacity);
+  out_box[0] = b;
+  return b != NULL;
 }
 
 int32_t mbt_bcast_sender_clone(void *bcast) {
@@ -500,6 +571,9 @@ void *mbt_bcast_subscribe(void *bcast) {
   pthread_mutex_unlock(&b->mu);
 
   void *ch = mbt_chan_new(cap);
+  if (!ch) {
+    return NULL;
+  }
   if (closed) {
     mbt_chan_sender_drop(ch);
     return ch;

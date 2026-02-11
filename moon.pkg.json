@@ -1,6 +1,0 @@
-{
-
-  "native-stub": [
-    "pthread_stub.c"
-  ]
-}

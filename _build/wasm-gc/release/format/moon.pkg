@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/core/bench",
+} for "test"
+
+options(
+  "native-stub": [ "pthread_stub.c" ],
+)
